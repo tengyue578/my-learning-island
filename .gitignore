@@ -37,6 +37,7 @@ dev-server*.log
 .vercel
 
 /dist/
+/static-dist/
 /.wrangler/
 /outputs/
 /work/
