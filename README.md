@@ -1,100 +1,139 @@
-# vinext-starter
+# 我的学习小岛
 
-A clean full-stack starter running on
-[vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and
-Drizzle support.
+面向 4–7 岁儿童的 Windows 本地趣味学习工作台。孩子通过听、看、点击和轻量跟读完成拼音、数量、汉字、英语与古诗启蒙；应用不需要登录或服务器，学习记录、星星、金币和每日进度全部保存在当前浏览器中。
 
-## Prerequisites
+## 安装与运行
 
-- Node.js `>=22.13.0`
-
-## Quick Start
+需要 Node.js 22.13 或更高版本。
 
 ```bash
 npm install
 npm run dev
+```
+
+打开终端显示的本地地址，默认是 `http://localhost:3000/`。
+
+生产构建：
+
+```bash
 npm run build
+npm run start
 ```
 
-This starter does not use `wrangler.jsonc`.
+自动化检查：
 
-## Included Shape
-
-- edit site code under `app/`
-- `.openai/hosting.json` declares optional Sites D1 and R2 bindings
-- `vite.config.ts` simulates declared bindings for local development
-- `db/schema.ts` starts intentionally empty
-- `examples/d1/` contains an optional D1 example surface
-- `drizzle.config.ts` supports local migration generation when needed
-
-## Workspace Auth Headers
-
-Signed-in visitors receive both `oai-authenticated-user-id` and `oai-authenticated-user-email`. Private Sites require every visitor to sign in; public Sites may also have anonymous visitors, for whom neither header is present.
-
-The user ID is stable for the same user on the same Site and different across Sites. Email and name are intended for display or contact purposes.
-
-SIWC-authenticated workspace sites may also receive
-`oai-authenticated-user-full-name` when the user's SIWC profile has a non-empty
-`name` claim. The full-name value is percent-encoded UTF-8 and is accompanied by
-`oai-authenticated-user-full-name-encoding: percent-encoded-utf-8`.
-
-Treat the full name as optional and fall back to email when it is absent:
-
-```tsx
-import { headers } from "next/headers";
-
-export default async function Home() {
-  const requestHeaders = await headers();
-  const userId = requestHeaders.get("oai-authenticated-user-id");
-  const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const displayName = fullName ?? email;
-  // ...
-}
+```bash
+npm test
+npm run lint
 ```
 
-## Optional Dispatch-Owned ChatGPT Sign-In
+## 当前可体验内容
 
-Import the ready-to-use helpers from `app/chatgpt-auth.ts` when the site needs
-optional or required ChatGPT sign-in:
+- 原创卡通学习小岛首页与六个地图入口
+- 每天自动生成并延续拼音、数学、汉字三个核心冒险
+- ListenChoose、PictureChoose、BalloonPop、QuantityGame 和 RepeatAfterMe 五种数据驱动小游戏
+- 第一天完整内容：拼音 `a`、数量 `1`、汉字“山、水”
+- 第一周引导计划；之后循环并保留可继续扩展的计划生成入口
+- 每次游戏记录尝试次数、完成时间、星星与掌握度
+- 按 1/3/7/14 天间隔自动复习，并优先安排最近薄弱知识
+- 单科奖励、全日奖励、每日一次权重随机超级宝箱
+- 浏览器刷新或关闭后恢复当前步骤、奖励与记录
+- 自由探索和可购买、换装的“我的房间”
+- 家长中心：今日数据、最近 7 天、分科掌握度、薄弱知识和每日设置
+- JSON 数据导出与带校验的导入恢复；旧版数据会自动迁移
+- 英语彩蛋：听单词、开口跟读、看图选择；古诗彩蛋：逐句听读与前两句跟读
+- 本地“小星星”伙伴：安全预设问题、三选一回应和开口鼓励，不连接外部 AI
+- 五大学科全部采用知识点闯关：每个知识点自动生成 5 个不同关卡，完成后才解锁下一项
+- 课程按前置关系由易到难：拼音从单韵母到声母，数学从数量到数字和比较，其他学科按课程顺序推进
+- 地址增加 `?debug=true` 后，家长中心显示调试工具
 
-- Use `getChatGPTUser()` for optional signed-in UI.
-- Use `requireChatGPTUser(returnTo)` for server-rendered pages that should send
-  anonymous visitors through Sign in with ChatGPT.
-- Use `chatGPTSignInPath(returnTo)` and `chatGPTSignOutPath(returnTo)` for
-  browser links or actions.
-- Pass a same-origin relative `returnTo` path for the destination after sign-in
-  or sign-out. The helper validates and safely encodes it.
-- Mark protected pages with `export const dynamic = "force-dynamic"` because
-  they depend on per-request identity headers.
+家长中心入口是顶部不醒目的锁图标，连续点击 5 次进入。
 
-Dispatch owns `/signin-with-chatgpt`, `/signout-with-chatgpt`, `/callback`, the
-OAuth cookies, and identity header injection. Do not implement app routes for
-those reserved paths. Routes that do not import and call the helper remain
-anonymous-compatible.
+## 关键目录
 
-SIWC establishes identity only; it does not prove workspace membership. Use the
-Sites hosting platform's access policy controls for workspace-wide restrictions,
-or enforce explicit server-side membership or allowlist checks.
+```text
+app/
+  page.tsx                 应用入口
+  globals.css              全局视觉与响应式样式
+components/
+  AppShell.tsx             顶层状态与页面切换
+src/
+  components/common/       通用儿童界面组件
+  pages/                   小岛、今日冒险、彩蛋学习、伙伴、探索、房间、家长中心
+  games/                   通用游戏渲染器
+  data/
+    pinyin/                拼音课程数据
+    math/                  数学课程数据
+    hanzi/                 汉字课程数据
+    english/               英语 Seed 数据
+    poetry/                古诗 Seed 数据
+    messages/              统一儿童文案
+  models/                  TypeScript 数据模型
+  services/
+    storage/               本地保存、导出与容错
+    speech/                SpeechSynthesis 与只检测声音存在的麦克风服务
+    dailyPlan/             每日计划生成
+    learning/              题目生成、记录与掌握度
+    rewards/               宝箱抽取、家具购买与摆放
+    ai/                    本地 AI 伙伴与 Provider 抽象
+public/assets/images/      可替换的图片资源
+```
 
-Use SIWC for account pages, user-specific dashboards, saved records, and write
-actions tied to the current ChatGPT user. Leave public content anonymous.
+## 新增知识点
 
-## Useful Commands
+课程和页面逻辑分离。新增内容只需修改对应数据文件并设置 `order`、`difficulty` 和可选的 `prerequisites`；题目生成器会自动为它创建 5 关挑战，课程地图按前置关系解锁。
 
-- `npm run dev`: start local development
-- `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
-- `npm run db:generate`: generate Drizzle migrations after schema changes
+### 新增拼音
 
-## Learn More
+在 `src/data/pinyin/lessons.ts` 的数据源中增加符号、示例图和顺序。拼音对象满足 `PinyinLesson` 类型，题目生成器会从同级内容中自动选择干扰项。
 
-- [vinext Documentation](https://github.com/cloudflare/vinext)
-- [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+### 新增汉字
+
+在 `src/data/hanzi/lessons.ts` 的 `rows` 中增加：
+
+```ts
+["木", "mù", "一棵树木", "🌲"]
+```
+
+系统会自动生成对应 `id`、难度、顺序和基础课程字段。
+
+### 新增数学内容
+
+在 `src/data/math/lessons.ts` 增加 `MathLesson`。数量类内容应提供 `value`、`image` 和简短 `prompt`。
+
+## 新增游戏
+
+1. 在 `src/models/index.ts` 的 `GameType` 中增加类型。
+2. 在 `src/games/` 中实现可复用交互。
+3. 在 `GameRenderer.tsx` 选择新模板。
+4. 在 `questionGenerator.ts` 通过数据生成题目，不把课程内容写进页面。
+
+错误反馈、逐关解锁、奖励和学习记录由冒险容器统一处理，新游戏不需要重复实现。知识点关卡统一由 `src/services/learning/questionGenerator.ts` 生成。
+
+## 修改每日学习数量
+
+首次一周安排位于 `src/services/dailyPlan/dailyPlan.ts` 的 `firstWeek`。每科数组中的知识点 `id` 决定当天的新学与复习内容。默认限制保持为每天 1 个新拼音、1 个数学概念、约 2 个汉字。
+
+## 数据备份与恢复
+
+家长中心提供“导出数据”，会下载包含资料、奖励、学习记录、掌握度、房间和每日计划的 JSON 文件。点击“导入备份”可选择之前导出的 JSON；系统会检查文件大小和核心字段，损坏或不属于学习小岛的文件不会覆盖现有记录。
+
+开发调试时可用 `?debug=true` 进入家长中心清空数据或增加金币。
+
+## 本地存储
+
+数据键为 `my-learning-island:v1`，保存在浏览器 `localStorage`。读取失败、JSON 损坏或存储不可用时会退回安全初始状态，不会白屏。每日计划使用电脑本地日期，同一天重复打开不会重新生成。
+
+## 语音说明
+
+朗读使用浏览器 `SpeechSynthesis`。应用会优先选择 Windows 中可用的温柔中文童声和自然英文女声，并针对短知识点与完整提示分别调整语速、音调、音量和停顿；如果首选声音未安装，会自动使用同语言的本地声音。若浏览器不支持或语音不可用，所有核心操作仍可通过画面和文字完成。首次播放可能需要先由用户点击页面，这是浏览器的自动播放策略。
+
+英语和古诗跟读会在孩子点击麦克风后申请浏览器权限，只检测一小段时间内是否有声音，不录音、不保存音频，也不评价发音准确度。拒绝权限或设备不支持时可以直接跳过，不影响继续体验。
+
+## 后续 Electron 打包
+
+项目把存储、语音、计划和 UI 分层，没有依赖服务端接口。后续可新增独立 Electron 主进程：生产环境加载构建产物，开发环境加载本地地址，并通过预加载脚本暴露备份文件选择等桌面能力。API Key 不应写入前端或打包产物。
+
+## 原创主视觉
+
+首页小岛图由内置图像生成工具为本项目原创生成，最终文件为 `public/assets/images/learning-island-hero.png`。生成提示要求无文字、无品牌、无版权角色，并使用柔和的儿童故事书风格。

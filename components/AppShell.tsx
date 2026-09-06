@@ -1,164 +1,257 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BookOpenText, Brain, ChevronRight, Crown, House, Languages, Medal, Rocket, Sparkles, Star, Trophy } from "lucide-react";
-import { LetterLand } from "@/components/LetterLand";
-import { PoemGarden } from "@/components/PoemGarden";
-import { NumberKingdom } from "@/components/NumberKingdom";
-import { LogicChallenge } from "@/components/LogicChallenge";
-import { Adventure } from "@/components/Adventure";
-import { AchievementWall } from "@/components/AchievementWall";
-import { deriveBadges } from "@/lib/learning";
-import { DEFAULT_PROGRESS, type ActivityKey, type LearningProgress, loadProgress, saveProgress } from "@/lib/storage";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AppState, CoreSubject, LearningRecord, LearningSettings, Subject, ViewName } from "@/src/models";
+import { childMessages } from "@/src/data/messages/childMessages";
+import { speechService } from "@/src/services/speech/SpeechService";
+import { createInitialState, importStateFile, loadState, localDateKey, resetState, saveState } from "@/src/services/storage/StorageService";
+import { ensureTodayPlan } from "@/src/services/dailyPlan/dailyPlan";
+import { recordLearning } from "@/src/services/learning/mastery";
+import { applyChestReward, drawChestReward } from "@/src/services/rewards/chest";
+import { buyFurniture } from "@/src/services/rewards/room";
+import { TopBar } from "@/src/components/common/TopBar";
+import { HomePage } from "@/src/pages/Home/HomePage";
+import { DailyAdventurePage } from "@/src/pages/DailyAdventure/DailyAdventurePage";
+import { ExplorePage } from "@/src/pages/Explore/ExplorePage";
+import { ParentCenterPage } from "@/src/pages/ParentCenter/ParentCenterPage";
+import { RoomPage } from "@/src/pages/MyRoom/RoomPage";
+import { BonusLearningPage } from "@/src/pages/BonusLearning/BonusLearningPage";
+import { CompanionPage } from "@/src/pages/Companion/CompanionPage";
+import { KnowledgeQuestPage } from "@/src/pages/KnowledgeQuest/KnowledgeQuestPage";
 
-type View = "home" | ActivityKey;
+interface WebMcpContext {
+  registerTool(tool: {
+    name: string;
+    title: string;
+    description: string;
+    inputSchema: Record<string, unknown>;
+    annotations: { readOnlyHint: boolean; untrustedContentHint: boolean };
+    execute(input: unknown): unknown;
+  }, options?: { signal: AbortSignal }): void | Promise<void>;
+}
 
-const NAV_ITEMS = [
-  { id: "letters" as const, label: "字母乐园", short: "字母", icon: Languages, description: "ABC 发音与配对", tone: 0 },
-  { id: "poems" as const, label: "古诗花园", short: "古诗", icon: BookOpenText, description: "8 首古诗跟读", tone: 1 },
-  { id: "numbers" as const, label: "数字王国", short: "数字", icon: Crown, description: "认数字与算一算", tone: 2 },
-  { id: "logic" as const, label: "逻辑挑战", short: "逻辑", icon: Brain, description: "规律图形和排序", tone: 3 },
-  { id: "adventure" as const, label: "闯关冒险", short: "闯关", icon: Rocket, description: "综合挑战收星星", tone: 4 },
-];
+type ModelDocument = Document & { modelContext?: WebMcpContext };
 
-function initialProgress() {
-  return typeof window === "undefined" ? DEFAULT_PROGRESS : loadProgress(window.localStorage);
+function initialState() {
+  return ensureTodayPlan(createInitialState());
 }
 
 export function AppShell() {
-  const [view, setView] = useState<View>("home");
-  const [progress, setProgress] = useState<LearningProgress>(initialProgress);
+  const [state, setState] = useState<AppState>(initialState);
+  const [view, setView] = useState<ViewName>("home");
+  const [exploreSubject, setExploreSubject] = useState<Subject>("pinyin");
+  const [quest, setQuest] = useState<{ subject: Subject; id: string }>({ subject: "pinyin", id: "pinyin_a" });
+  const [bonusSubject, setBonusSubject] = useState<"english" | "poetry">("english");
+  const [message, setMessage] = useState<string>(childMessages.welcome);
+  const [hydrated, setHydrated] = useState(false);
+  const parentTapCount = useRef(0);
+  const stateRef = useRef(state);
+  const date = localDateKey();
+  const debug = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("debug") === "true";
+  const plan = useMemo(() => state.dailyPlans[date], [state.dailyPlans, date]);
 
-  useEffect(() => { saveProgress(progress, window.localStorage); }, [progress]);
+  useEffect(() => {
+    const stored = ensureTodayPlan(loadState());
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      setState(stored);
+      stateRef.current = stored;
+      setHydrated(true);
+      const route = window.location.hash.slice(1) as ViewName;
+      if (["home", "adventure", "parent", "room", "explore", "quest", "bonus", "companion"].includes(route)) setView(route);
+    });
+    return () => { active = false; };
+  }, []);
 
-  function openView(nextView: View) {
-    setView(nextView);
-    window.scrollTo?.({ top: 0, behavior: "smooth" });
+  useEffect(() => {
+    stateRef.current = state;
+    if (hydrated) saveState(state);
+  }, [state, hydrated]);
+
+  useEffect(() => {
+    speechService.prepare();
+  }, []);
+
+  useEffect(() => {
+    const onHash = () => {
+      const route = window.location.hash.slice(1) as ViewName;
+      if (["home", "adventure", "parent", "room", "explore", "quest", "bonus", "companion"].includes(route)) setView(route);
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+
+  useEffect(() => {
+    const context = (document as ModelDocument).modelContext;
+    if (!context?.registerTool) return;
+    const lifecycle = new AbortController();
+    void Promise.resolve(context.registerTool({
+      name: "read_learning_progress",
+      title: "读取学习进度",
+      description: "读取今天的冒险完成情况和累计奖励，不修改数据。",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, untrustedContentHint: false },
+      execute() {
+        const current = stateRef.current;
+        const today = current.dailyPlans[localDateKey()];
+        return { completedTasks: today?.tasks.filter((task) => task.completed).length ?? 0, dailyCompleted: today?.dailyCompleted ?? false, rewards: current.rewards };
+      },
+    }, { signal: lifecycle.signal })).catch(() => undefined);
+    void Promise.resolve(context.registerTool({
+      name: "start_daily_adventure",
+      title: "开始今日冒险",
+      description: "打开孩子今天尚未完成的学习冒险。",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: false, untrustedContentHint: false },
+      execute() {
+        setView("adventure");
+        window.location.hash = "adventure";
+        return { opened: true };
+      },
+    }, { signal: lifecycle.signal })).catch(() => undefined);
+    return () => lifecycle.abort();
+  }, []);
+
+  function navigate(next: ViewName) {
+    setView(next);
+    window.location.hash = next;
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
-  function recordActivity(key: ActivityKey) {
-    setProgress((current) => ({
-      ...current,
-      activityCounts: { ...current.activityCounts, [key]: current.activityCounts[key] + 1 },
-    }));
+  const speak = useCallback((text: string, lang?: string) => {
+    setMessage(text);
+    if (!speechService.speak(text, lang)) setMessage(childMessages.unsupportedSpeech);
+  }, []);
+
+  function openAdventure() {
+    setState((current) => {
+      const currentPlan = current.dailyPlans[date];
+      if (!currentPlan || currentPlan.dailyCompleted) return current;
+      const firstIncomplete = currentPlan.tasks.findIndex((task) => !task.completed);
+      if (firstIncomplete < 0 || firstIncomplete === currentPlan.activeTaskIndex) return current;
+      return { ...current, dailyPlans: { ...current.dailyPlans, [date]: { ...currentPlan, activeTaskIndex: firstIncomplete } } };
+    });
+    speak(plan?.dailyCompleted ? childMessages.allDone : childMessages.start);
+    navigate("adventure");
   }
 
-  function completeLevel(level: number, reward: number) {
-    setProgress((current) => {
-      const completedLevels = current.completedLevels.includes(level)
-        ? current.completedLevels
-        : [...current.completedLevels, level].sort((a, b) => a - b);
-      const stars = current.stars + reward;
-      return {
-        ...current,
-        stars,
-        adventureLevel: Math.min(10, Math.max(current.adventureLevel, level + 1)),
-        completedLevels,
-        badges: deriveBadges(stars, completedLevels),
-        activityCounts: { ...current.activityCounts, adventure: current.activityCounts.adventure + 1 },
-      };
+  function openExplore(subject: Subject) {
+    setExploreSubject(subject);
+    navigate("explore");
+    const names: Record<Subject, string> = { pinyin: "拼音乐园", math: "数学王国", hanzi: "汉字森林", english: "英语小镇", poetry: "古诗花园" };
+    speak(`欢迎来到${names[subject]}！`);
+  }
+
+  function openBonus(subject: "english" | "poetry") {
+    setBonusSubject(subject);
+    openExplore(subject);
+  }
+
+  function openQuest(subject: Subject, id: string) {
+    setQuest({ subject, id });
+    navigate("quest");
+  }
+
+  function updateStep(subject: CoreSubject, stepIndex: number) {
+    setState((current) => {
+      const currentPlan = current.dailyPlans[date];
+      const tasks = currentPlan.tasks.map((task) => task.subject === subject ? { ...task, stepIndex } : task);
+      return { ...current, dailyPlans: { ...current.dailyPlans, [date]: { ...currentPlan, tasks } } };
     });
   }
 
+  function completeSubject(subject: CoreSubject) {
+    setState((current) => {
+      const currentPlan = current.dailyPlans[date];
+      const taskIndex = currentPlan.tasks.findIndex((task) => task.subject === subject);
+      const alreadyDone = currentPlan.tasks[taskIndex]?.completed;
+      if (alreadyDone) return current;
+      const tasks = currentPlan.tasks.map((task) => task.subject === subject ? { ...task, completed: true, rewardClaimed: true } : task);
+      const allDone = tasks.every((task) => task.completed);
+      const nextTask = Math.min(tasks.length - 1, taskIndex + 1);
+      return {
+        ...current,
+        rewards: { ...current.rewards, coins: current.rewards.coins + 20 + (allDone ? 50 : 0) },
+        dailyPlans: { ...current.dailyPlans, [date]: { ...currentPlan, tasks, activeTaskIndex: nextTask, dailyCompleted: allDone } },
+      };
+    });
+    speak(subject === "hanzi" ? childMessages.allDone : childMessages.subjectDone);
+  }
+
+  function addRecord(record: LearningRecord) {
+    setState((current) => recordLearning(current, record));
+  }
+
+  function claimChest() {
+    const reward = drawChestReward();
+    let rewardMessage = "宝箱打开啦！";
+    setState((current) => {
+      const currentPlan = current.dailyPlans[date];
+      if (!currentPlan?.dailyCompleted || currentPlan.chestClaimed) return current;
+      const awarded = applyChestReward(current, reward);
+      rewardMessage = `宝箱打开啦！得到${awarded.result.label}！`;
+      const awardedPlan = awarded.state.dailyPlans[date];
+      return {
+        ...awarded.state,
+        dailyPlans: { ...awarded.state.dailyPlans, [date]: { ...awardedPlan, chestClaimed: true, chestReward: awarded.result } },
+      };
+    });
+    queueMicrotask(() => speak(rewardMessage));
+  }
+
+  function handleRoomItem(itemId: string) {
+    let resultMessage = "放好啦！";
+    setState((current) => {
+      const result = buyFurniture(current, itemId);
+      resultMessage = result.message;
+      return result.state;
+    });
+    queueMicrotask(() => speak(resultMessage));
+  }
+
+  function updateSettings(settings: LearningSettings) {
+    setState((current) => ({ ...current, settings }));
+  }
+
+  async function importBackup(file: File) {
+    try {
+      const imported = ensureTodayPlan(await importStateFile(file));
+      setState(imported);
+      return { ok: true, message: "备份恢复成功，学习记录已经回来啦。" };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : "备份恢复失败，请重新选择。" };
+    }
+  }
+
+  function parentTap() {
+    parentTapCount.current += 1;
+    if (parentTapCount.current >= 5) {
+      parentTapCount.current = 0;
+      navigate("parent");
+    }
+  }
+
+  function resetAll() {
+    if (!window.confirm("确定清空全部学习数据吗？")) return;
+    const fresh = ensureTodayPlan(resetState());
+    setState(fresh);
+    navigate("home");
+  }
+
+  if (!plan) return <div className="loading-island"><span>⭐</span><strong>小岛正在醒来…</strong></div>;
+
   return (
-    <div className="app-shell">
-      <aside className="desktop-sidebar">
-        <button className="brand-button" onClick={() => openView("home")} aria-label="返回宝贝学习乐园首页">
-          <span className="brand-mark"><Sparkles size={24} /></span>
-          <span><strong>宝贝学习乐园</strong><small>每天进步一点点</small></span>
-        </button>
-        <nav aria-label="电脑端学习导航">
-          <button className={`nav-item home ${view === "home" ? "active" : ""}`} onClick={() => openView("home")}>
-            <House size={22} /><span>乐园首页</span>
-          </button>
-          <p className="nav-section-label">学习地图</p>
-          {NAV_ITEMS.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button key={item.id} className={`nav-item candy-${item.tone} ${view === item.id ? "active" : ""}`} aria-label={`进入${item.label}`} onClick={() => openView(item.id)}>
-                <span className="nav-icon"><Icon size={22} /></span>
-                <span><strong>{item.label}</strong><small>{item.description}</small></span>
-                <ChevronRight className="nav-chevron" size={18} />
-              </button>
-            );
-          })}
-        </nav>
-        <div className="sidebar-reward">
-          <div><Trophy size={28} /><span>冒险进度</span></div>
-          <strong>{progress.completedLevels.length}<small>/10 关</small></strong>
-          <div className="progress-track"><i style={{ width: `${progress.completedLevels.length * 10}%` }} /></div>
-        </div>
-      </aside>
-
-      <div className="app-main">
-        <header className="mobile-header">
-          <button onClick={() => openView("home")} aria-label="返回乐园首页"><span className="brand-mark"><Sparkles size={20} /></span><strong>宝贝学习乐园</strong></button>
-          <div className="star-counter" aria-label="手机端累计星星"><Star size={19} fill="currentColor" /><strong>{progress.stars}</strong></div>
-        </header>
-        <div className="top-reward-bar">
-          <div className="welcome-chip"><span className="sun-dot" />嗨，小小探险家！</div>
-          <div className="star-counter large" aria-label="累计星星"><Star size={22} fill="currentColor" /><strong>{progress.stars}</strong><span>颗星星</span></div>
-        </div>
-        <main id="main-content">
-          {view === "home" && <HomeView progress={progress} onOpen={openView} />}
-          {view === "letters" && <LetterLand onActivity={() => recordActivity("letters")} />}
-          {view === "poems" && <PoemGarden onActivity={() => recordActivity("poems")} />}
-          {view === "numbers" && <NumberKingdom onActivity={() => recordActivity("numbers")} />}
-          {view === "logic" && <LogicChallenge onActivity={() => recordActivity("logic")} />}
-          {view === "adventure" && <Adventure currentLevel={progress.adventureLevel} completedLevels={progress.completedLevels} onLevelComplete={completeLevel} />}
-        </main>
-      </div>
-
-      <nav className="mobile-bottom-nav" aria-label="手机端学习导航">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          return <button key={item.id} className={view === item.id ? "active" : ""} aria-label={`进入${item.label}`} onClick={() => openView(item.id)}><span className={`candy-${item.tone}`}><Icon size={22} /></span><small>{item.short}</small></button>;
-        })}
-      </nav>
-    </div>
-  );
-}
-
-function HomeView({ progress, onOpen }: { progress: LearningProgress; onOpen: (view: View) => void }) {
-  const nextBadge = progress.stars < 5 ? 5 : progress.stars < 15 ? 15 : progress.stars < 30 ? 30 : null;
-  return (
-    <div className="home-view">
-      <section className="hero-panel">
-        <div className="hero-copy">
-          <span className="hero-kicker"><Medal size={18} />今天也要闪闪发光</span>
-          <h1>今天想玩什么？</h1>
-          <p>选一个喜欢的小世界，动动脑、开口读、勇敢闯关！</p>
-          <button className="hero-cta" onClick={() => onOpen("adventure")}><Rocket size={22} />继续第 {progress.adventureLevel} 关<ChevronRight size={20} /></button>
-        </div>
-        <div className="hero-orbit" aria-hidden="true">
-          <div className="orbit-core"><Star size={46} fill="currentColor" /><span>{progress.stars}</span><small>颗星星</small></div>
-          <i className="orbit-item one">A</i><i className="orbit-item two">3</i><i className="orbit-item three">诗</i>
-        </div>
-      </section>
-
-      <section className="learning-section" aria-labelledby="learning-heading">
-        <div className="section-title-row"><div><span className="eyebrow">五个快乐小世界</span><h2 id="learning-heading">开始今天的学习</h2></div><span className="mini-progress">已完成 {Object.values(progress.activityCounts).reduce((sum, count) => sum + count, 0)} 次活动</span></div>
-        <div className="module-card-grid">
-          {NAV_ITEMS.map((item, index) => {
-            const Icon = item.icon;
-            const labels = ["听发音 · 玩配对", "看拼音 · 跟着读", "认数字 · 算一算", "找规律 · 排顺序", "答题 · 收星星"];
-            return (
-              <article className={`module-card candy-${item.tone}`} key={item.id}>
-                <div className="module-card-top"><span><Icon size={28} /></span><b>0{index + 1}</b></div>
-                <h3>{item.label}</h3><p>{labels[index]}</p>
-                <div className="module-card-footer"><small>{progress.activityCounts[item.id]} 次练习</small><button aria-label={`进入${item.label}`} onClick={() => onOpen(item.id)}><ChevronRight size={22} /></button></div>
-              </article>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="progress-banner">
-        <div className="progress-badge"><Trophy size={32} /></div>
-        <div><span className="eyebrow">我的成长</span><h2>{nextBadge ? `再得 ${nextBadge - progress.stars} 颗星，解锁新徽章` : "徽章墙已经全部点亮"}</h2></div>
-        <div className="banner-stars"><Star size={22} fill="currentColor" /><strong>{progress.stars}</strong></div>
-      </section>
-      <AchievementWall unlocked={progress.badges} />
+    <div className={`island-app ${hydrated ? "ready" : ""}`}>
+      {view !== "parent" && <TopBar stars={state.rewards.stars} coins={state.rewards.coins} chestReady={plan.dailyCompleted && !plan.chestClaimed} onHome={() => navigate("home")} onChest={() => plan.dailyCompleted ? navigate("adventure") : speak("完成三个冒险，宝箱就会亮起来！")} onParentTap={parentTap} />}
+      {view === "home" && <HomePage plan={plan} message={message} enabledSubjects={state.settings.enabledSubjects} onSpeak={speak} onAdventure={openAdventure} onExplore={openExplore} onBonus={openBonus} onCompanion={() => navigate("companion")} onRoom={() => navigate("room")} onChest={() => navigate("adventure")} />}
+      {view === "adventure" && <DailyAdventurePage plan={plan} onHome={() => navigate("home")} onSpeak={speak} onStep={updateStep} onRecord={addRecord} onSubjectComplete={completeSubject} onClaimChest={claimChest} onRoom={() => navigate("room")} />}
+      {view === "explore" && <ExplorePage subject={exploreSubject} state={state} onHome={() => navigate("home")} onQuest={openQuest} />}
+      {view === "quest" && <KnowledgeQuestPage state={state} subject={quest.subject} knowledgePointId={quest.id} date={date} onBack={() => navigate("explore")} onSpeak={speak} onRecord={addRecord} />}
+      {view === "room" && <RoomPage state={state} message={message} onHome={() => navigate("home")} onItem={handleRoomItem} />}
+      {view === "bonus" && <BonusLearningPage subject={bonusSubject} date={date} onHome={() => navigate("home")} onSpeak={speak} onRecord={addRecord} />}
+      {view === "companion" && <CompanionPage onHome={() => navigate("home")} onSpeak={speak} />}
+      {view === "parent" && <ParentCenterPage state={state} plan={plan} debug={debug} onHome={() => navigate("home")} onReset={resetAll} onAddCoins={() => setState((current) => ({ ...current, rewards: { ...current.rewards, coins: current.rewards.coins + 100 } }))} onSettings={updateSettings} onNickname={(nickname) => setState((current) => ({ ...current, profile: { ...current.profile, nickname } }))} onImport={importBackup} />}
     </div>
   );
 }

@@ -10,22 +10,22 @@ export async function generateMetadata(): Promise<Metadata> {
 
   return {
     metadataBase,
-    title: "宝贝学习乐园｜4 岁儿童快乐学习工作台",
-    description: "字母、古诗、数字、逻辑和闯关五大模块，让孩子在游戏中快乐学习。",
+    title: "我的学习小岛｜儿童趣味学习工作台",
+    description: "在小岛冒险中认识拼音、数量和汉字。",
     icons: {
       icon: "/favicon.svg",
       shortcut: "/favicon.svg",
     },
     openGraph: {
-      title: "宝贝学习乐园",
-      description: "快乐学 · 勇敢闯 · 星星亮",
+      title: "我的学习小岛",
+      description: "在小岛冒险中认识拼音、数量和汉字。",
       type: "website",
       images: [{ url: "/og.png", width: 1536, height: 1024, alt: "宝贝学习乐园彩虹糖果色学习卡片" }],
     },
     twitter: {
       card: "summary_large_image",
-      title: "宝贝学习乐园",
-      description: "快乐学 · 勇敢闯 · 星星亮",
+      title: "我的学习小岛",
+      description: "在小岛冒险中认识拼音、数量和汉字。",
       images: ["/og.png"],
     },
   };
