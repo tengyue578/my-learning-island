@@ -39,7 +39,7 @@ export function HomePage({ plan, message, enabledSubjects, onSpeak, onAdventure,
       <section className="island-stage" aria-label="学习小岛地图">
         {/* The generated map is decorative product artwork, not content fetched from a remote image host. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/assets/images/learning-island-hero.png" alt="漂浮在云朵上的学习小岛" />
+        <img src="./assets/images/learning-island-hero.png" alt="漂浮在云朵上的学习小岛" />
         <div className="map-shade" />
         <div className="companion-card">
           <button className="companion" onClick={onCompanion} aria-label="和小星星聊聊">⭐</button>
